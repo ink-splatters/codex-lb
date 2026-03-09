@@ -144,6 +144,7 @@ class ProxyService:
         payload: ResponsesRequest,
         headers: Mapping[str, str],
         *,
+        response_headers: dict[str, str] | None = None,
         codex_session_affinity: bool = False,
         propagate_http_errors: bool = False,
         openai_cache_affinity: bool = False,
@@ -158,6 +159,7 @@ class ProxyService:
         return self._stream_with_retry(
             payload,
             filtered,
+            response_headers=response_headers,
             codex_session_affinity=codex_session_affinity,
             propagate_http_errors=propagate_http_errors,
             openai_cache_affinity=openai_cache_affinity,
@@ -1804,6 +1806,7 @@ class ProxyService:
         payload: ResponsesRequest,
         headers: Mapping[str, str],
         *,
+        response_headers: dict[str, str] | None,
         codex_session_affinity: bool,
         propagate_http_errors: bool,
         openai_cache_affinity: bool,
@@ -2009,6 +2012,7 @@ class ProxyService:
                             headers,
                             request_id,
                             attempt < max_attempts - 1,
+                            response_headers=response_headers,
                             api_key=api_key,
                             settlement=settlement,
                             suppress_text_done_events=suppress_text_done_events,
@@ -2135,6 +2139,7 @@ class ProxyService:
                                 headers,
                                 request_id,
                                 False,
+                                response_headers=response_headers,
                                 api_key=api_key,
                                 settlement=settlement,
                                 suppress_text_done_events=suppress_text_done_events,
@@ -2246,6 +2251,7 @@ class ProxyService:
         request_id: str,
         allow_retry: bool,
         *,
+        response_headers: dict[str, str] | None,
         api_key: ApiKeyData | None,
         settlement: _StreamSettlement,
         suppress_text_done_events: bool,
@@ -2268,23 +2274,18 @@ class ProxyService:
         saw_text_delta = False
 
         try:
+            stream_kwargs: dict[str, object] = {"raise_for_status": True}
+            if response_headers is not None:
+                stream_kwargs["response_headers"] = response_headers
             if upstream_stream_transport is not None:
-                stream = core_stream_responses(
-                    payload,
-                    headers,
-                    access_token,
-                    account_id,
-                    raise_for_status=True,
-                    upstream_stream_transport_override=upstream_stream_transport,
-                )
-            else:
-                stream = core_stream_responses(
-                    payload,
-                    headers,
-                    access_token,
-                    account_id,
-                    raise_for_status=True,
-                )
+                stream_kwargs["upstream_stream_transport_override"] = upstream_stream_transport
+            stream = core_stream_responses(
+                payload,
+                headers,
+                access_token,
+                account_id,
+                **stream_kwargs,
+            )
             iterator = stream.__aiter__()
             try:
                 first = await iterator.__anext__()

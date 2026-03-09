@@ -8,9 +8,11 @@ from app.core.openai.requests import ResponsesCompactRequest, ResponsesRequest
 from app.core.openai.v1_requests import V1ResponsesCompactRequest, V1ResponsesRequest
 
 
-def test_responses_requires_instructions():
-    with pytest.raises(ValidationError):
-        ResponsesRequest.model_validate({"model": "gpt-5.1", "input": []})
+def test_responses_omitted_instructions_defaults_empty_string():
+    request = ResponsesRequest.model_validate({"model": "gpt-5.1", "input": []})
+
+    assert request.instructions == ""
+    assert request.to_payload()["instructions"] == ""
 
 
 def test_responses_requires_input():
@@ -18,10 +20,12 @@ def test_responses_requires_input():
         ResponsesRequest.model_validate({"model": "gpt-5.1", "instructions": "hi"})
 
 
-def test_store_true_is_rejected():
+def test_store_true_is_preserved():
     payload = {"model": "gpt-5.1", "instructions": "hi", "input": [], "store": True}
-    with pytest.raises(ValueError, match="store must be false"):
-        ResponsesRequest.model_validate(payload)
+    request = ResponsesRequest.model_validate(payload)
+
+    assert request.store is True
+    assert request.to_payload()["store"] is True
 
 
 def test_store_omitted_defaults_to_false():
@@ -340,15 +344,16 @@ def test_responses_normalizes_tool_choice_web_search_preview(tool_choice):
     assert request.tool_choice == {"type": "web_search"}
 
 
-def test_responses_rejects_invalid_include_value():
+def test_responses_preserves_include_values():
     payload = {
         "model": "gpt-5.1",
         "instructions": "hi",
         "input": [],
         "include": ["message.output_text.logprobs", "bad.include.value"],
     }
-    with pytest.raises(ValueError, match="Unsupported include value"):
-        ResponsesRequest.model_validate(payload)
+    request = ResponsesRequest.model_validate(payload)
+
+    assert request.include == ["message.output_text.logprobs", "bad.include.value"]
 
 
 def test_responses_accepts_known_include_values():
@@ -362,16 +367,17 @@ def test_responses_accepts_known_include_values():
     assert request.include == ["reasoning.encrypted_content", "web_search_call.action.sources"]
 
 
-def test_responses_rejects_conversation_previous_response_id():
+def test_responses_accepts_previous_response_id_without_conversation():
     payload = {
         "model": "gpt-5.1",
         "instructions": "hi",
         "input": [],
-        "conversation": "conv_1",
         "previous_response_id": "resp_1",
     }
-    with pytest.raises(ValueError, match="previous_response_id is not supported"):
-        ResponsesRequest.model_validate(payload)
+    request = ResponsesRequest.model_validate(payload)
+
+    assert request.previous_response_id == "resp_1"
+    assert request.to_payload()["previous_response_id"] == "resp_1"
 
 
 def test_v1_messages_convert_to_responses_input():
@@ -428,10 +434,19 @@ def test_v1_input_string_passthrough():
     assert request.input == [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}]
 
 
-def test_v1_rejects_builtin_tools():
+def test_v1_preserves_passthrough_tool_types():
     payload = {"model": "gpt-5.1", "input": [], "tools": [{"type": "image_generation"}]}
-    with pytest.raises(ValidationError, match="Unsupported tool type"):
-        V1ResponsesRequest.model_validate(payload)
+    request = V1ResponsesRequest.model_validate(payload)
+
+    assert request.tools == [{"type": "image_generation"}]
+
+
+def test_responses_preserves_truncation():
+    payload = {"model": "gpt-5.1", "instructions": "hi", "input": [], "truncation": "auto"}
+    request = ResponsesRequest.model_validate(payload)
+
+    assert request.truncation == "auto"
+    assert request.to_payload()["truncation"] == "auto"
 
 
 def test_v1_compact_messages_convert():

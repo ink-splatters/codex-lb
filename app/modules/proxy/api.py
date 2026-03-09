@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 from collections.abc import AsyncIterator, Mapping
@@ -59,6 +61,7 @@ from app.modules.proxy.request_policy import (
     validate_model_access,
 )
 from app.modules.proxy.schemas import (
+    CodexModelsResponse,
     ModelListItem,
     ModelListResponse,
     ModelMetadata,
@@ -208,18 +211,18 @@ async def v1_responses_websocket(
     )
 
 
-@router.get("/models", response_model=ModelListResponse)
+@router.get("/models", response_model=CodexModelsResponse)
 async def models(
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
-    return await _build_models_response(api_key)
+    return await _build_codex_models_response(api_key)
 
 
 @v1_router.get("/models", response_model=ModelListResponse)
 async def v1_models(
     api_key: ApiKeyData | None = Security(validate_proxy_api_key),
 ) -> Response:
-    return await _build_models_response(api_key)
+    return await _build_v1_models_response(api_key)
 
 
 @transcribe_router.post("/transcribe")
@@ -263,17 +266,33 @@ async def v1_audio_transcriptions(
     )
 
 
-async def _build_models_response(api_key: ApiKeyData | None) -> Response:
+async def _build_codex_models_response(api_key: ApiKeyData | None) -> Response:
     reservation = await _enforce_request_limits(
         api_key,
         request_model=None,
         request_service_tier=None,
     )
 
-    allowed_models = set(api_key.allowed_models) if api_key and api_key.allowed_models else None
-    if api_key and api_key.enforced_model:
-        forced = {api_key.enforced_model}
-        allowed_models = forced if allowed_models is None else (allowed_models & forced)
+    allowed_models = _allowed_models_for_api_key(api_key)
+    snapshot = get_model_registry().get_snapshot()
+    codex_models = _codex_models_payload(snapshot, allowed_models)
+    headers = _codex_models_headers(codex_models)
+
+    await _release_reservation(reservation)
+    return JSONResponse(
+        content=CodexModelsResponse(models=codex_models).model_dump(mode="json"),
+        headers=headers,
+    )
+
+
+async def _build_v1_models_response(api_key: ApiKeyData | None) -> Response:
+    reservation = await _enforce_request_limits(
+        api_key,
+        request_model=None,
+        request_service_tier=None,
+    )
+
+    allowed_models = _allowed_models_for_api_key(api_key)
     created = int(time.time())
 
     registry = get_model_registry()
@@ -299,6 +318,55 @@ async def _build_models_response(api_key: ApiKeyData | None) -> Response:
     return JSONResponse(content=ModelListResponse(data=items).model_dump(mode="json"))
 
 
+def _allowed_models_for_api_key(api_key: ApiKeyData | None) -> set[str] | None:
+    allowed_models = set(api_key.allowed_models) if api_key and api_key.allowed_models else None
+    if api_key and api_key.enforced_model:
+        forced = {api_key.enforced_model}
+        allowed_models = forced if allowed_models is None else (allowed_models & forced)
+    return allowed_models
+
+
+def _public_models(snapshot: object, allowed_models: set[str] | None) -> list[UpstreamModel]:
+    if snapshot is None or not hasattr(snapshot, "models"):
+        return []
+    models = cast(dict[str, UpstreamModel], snapshot.models)
+    return [
+        model
+        for _, model in sorted(models.items())
+        if is_public_model(model, allowed_models)
+    ]
+
+
+def _codex_models_payload(snapshot: object, allowed_models: set[str] | None) -> list[dict[str, JsonValue]]:
+    models_payload: list[dict[str, JsonValue]] = []
+    for model in _public_models(snapshot, allowed_models):
+        payload = dict(model.raw)
+        payload["prefer_websockets"] = False
+        models_payload.append(payload)
+    return models_payload
+
+
+def _codex_models_etag(models_payload: list[dict[str, JsonValue]]) -> str | None:
+    if not models_payload:
+        return None
+    encoded = json.dumps(models_payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+    digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    return f'"codex-lb-{digest}"'
+
+
+def _codex_models_headers(models_payload: list[dict[str, JsonValue]]) -> dict[str, str]:
+    etag = _codex_models_etag(models_payload)
+    if etag is None:
+        return {}
+    return {"ETag": etag}
+
+
+def _current_codex_models_etag(api_key: ApiKeyData | None) -> str | None:
+    snapshot = get_model_registry().get_snapshot()
+    allowed_models = _allowed_models_for_api_key(api_key)
+    return _codex_models_etag(_codex_models_payload(snapshot, allowed_models))
+
+
 def _to_model_metadata(model: UpstreamModel) -> ModelMetadata:
     return ModelMetadata(
         display_name=model.display_name,
@@ -313,7 +381,8 @@ def _to_model_metadata(model: UpstreamModel) -> ModelMetadata:
         supports_reasoning_summaries=model.supports_reasoning_summaries,
         support_verbosity=model.support_verbosity,
         default_verbosity=model.default_verbosity,
-        prefer_websockets=model.prefer_websockets,
+        # codex-lb only exposes HTTP/SSE to downstream clients today.
+        prefer_websockets=False,
         supports_parallel_tool_calls=model.supports_parallel_tool_calls,
         supported_in_api=model.supported_in_api,
         minimal_client_version=model.minimal_client_version,
@@ -423,9 +492,11 @@ async def _stream_responses(
 
     rate_limit_headers = await context.service.rate_limit_headers()
     payload.stream = True
+    upstream_response_headers: dict[str, str] = {}
     stream = context.service.stream_responses(
         payload,
         request.headers,
+        response_headers=upstream_response_headers,
         codex_session_affinity=codex_session_affinity,
         propagate_http_errors=True,
         openai_cache_affinity=openai_cache_affinity,
@@ -436,18 +507,24 @@ async def _stream_responses(
     try:
         first = await stream.__anext__()
     except StopAsyncIteration:
+        codex_models_etag = _current_codex_models_etag(api_key)
+        if codex_models_etag is not None:
+            upstream_response_headers["x-models-etag"] = codex_models_etag
         return StreamingResponse(
             _prepend_first(None, stream),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", **rate_limit_headers},
+            headers={"Cache-Control": "no-cache", **rate_limit_headers, **upstream_response_headers},
         )
     except ProxyResponseError as exc:
         await _release_reservation(reservation)
         return _logged_error_json_response(request, exc.status_code, exc.payload, headers=rate_limit_headers)
+    codex_models_etag = _current_codex_models_etag(api_key)
+    if codex_models_etag is not None:
+        upstream_response_headers["x-models-etag"] = codex_models_etag
     return StreamingResponse(
         _prepend_first(first, stream),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", **rate_limit_headers},
+        headers={"Cache-Control": "no-cache", **rate_limit_headers, **upstream_response_headers},
     )
 
 
@@ -471,9 +548,11 @@ async def _collect_responses(
 
     rate_limit_headers = await context.service.rate_limit_headers()
     payload.stream = True
+    upstream_response_headers: dict[str, str] = {}
     stream = context.service.stream_responses(
         payload,
         request.headers,
+        response_headers=upstream_response_headers,
         codex_session_affinity=codex_session_affinity,
         propagate_http_errors=True,
         openai_cache_affinity=openai_cache_affinity,
@@ -492,6 +571,9 @@ async def _collect_responses(
             error.model_dump(mode="json", exclude_none=True),
             headers=rate_limit_headers,
         )
+    codex_models_etag = _current_codex_models_etag(api_key)
+    if codex_models_etag is not None:
+        upstream_response_headers["x-models-etag"] = codex_models_etag
     if isinstance(response_payload, OpenAIResponsePayload):
         if response_payload.status == "failed":
             error_payload = _error_envelope_from_response(response_payload.error)
@@ -504,7 +586,7 @@ async def _collect_responses(
             )
         return JSONResponse(
             content=response_payload.model_dump(mode="json", exclude_none=True),
-            headers=rate_limit_headers,
+            headers={**rate_limit_headers, **upstream_response_headers},
         )
     status_code = _status_for_error(response_payload.error)
     return _logged_error_json_response(

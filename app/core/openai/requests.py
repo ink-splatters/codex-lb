@@ -9,24 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.core.types import JsonObject, JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
 
-_RESPONSES_INCLUDE_ALLOWLIST = {
-    "code_interpreter_call.outputs",
-    "computer_call_output.output.image_url",
-    "file_search_call.results",
-    "message.input_image.image_url",
-    "message.output_text.logprobs",
-    "reasoning.encrypted_content",
-    "web_search_call.action.sources",
-}
-
-UNSUPPORTED_TOOL_TYPES = {
-    "file_search",
-    "code_interpreter",
-    "computer_use",
-    "computer_use_preview",
-    "image_generation",
-}
-
 _TOOL_TYPE_ALIASES = {
     "web_search_preview": "web_search",
 }
@@ -81,39 +63,8 @@ def validate_tool_types(tools: list[JsonValue]) -> list[JsonValue]:
                 tool = dict(tool_mapping)
                 tool["type"] = normalized_type
                 tool_type = normalized_type
-            if tool_type in UNSUPPORTED_TOOL_TYPES:
-                raise ValueError(f"Unsupported tool type: {tool_type}")
         normalized_tools.append(tool)
     return normalized_tools
-
-
-def _has_input_file_id(input_items: list[JsonValue]) -> bool:
-    for item in input_items:
-        if not is_json_mapping(item):
-            continue
-        item_mapping = cast(Mapping[str, JsonValue], item)
-        if _is_input_file_with_id(item_mapping):
-            return True
-        content = item_mapping.get("content")
-        if is_json_list(content):
-            parts = cast(list[JsonValue], content)
-        elif is_json_mapping(content):
-            parts = [cast(Mapping[str, JsonValue], content)]
-        else:
-            parts = []
-        for part in parts:
-            if not is_json_mapping(part):
-                continue
-            if _is_input_file_with_id(cast(Mapping[str, JsonValue], part)):
-                return True
-    return False
-
-
-def _is_input_file_with_id(item: Mapping[str, JsonValue]) -> bool:
-    if item.get("type") != "input_file":
-        return False
-    file_id = item.get("file_id")
-    return isinstance(file_id, str) and bool(file_id)
 
 
 def _sanitize_input_items(input_items: list[JsonValue]) -> list[JsonValue]:
@@ -313,7 +264,7 @@ class ResponsesRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     model: str = Field(min_length=1)
-    instructions: str
+    instructions: str = ""
     input: JsonValue
     tools: list[JsonValue] = Field(default_factory=list)
     tool_choice: str | dict[str, JsonValue] | None = None
@@ -334,44 +285,26 @@ class ResponsesRequest(BaseModel):
     def _validate_input_type(cls, value: JsonValue) -> JsonValue:
         if isinstance(value, str):
             normalized = _normalize_input_text(value)
-            if _has_input_file_id(normalized):
-                raise ValueError("input_file.file_id is not supported")
             return _sanitize_input_items(normalized)
         if is_json_list(value):
             input_items = cast(list[JsonValue], value)
-            if _has_input_file_id(input_items):
-                raise ValueError("input_file.file_id is not supported")
             return _sanitize_input_items(input_items)
         raise ValueError("input must be a string or array")
 
     @field_validator("include")
     @classmethod
     def _validate_include(cls, value: list[str]) -> list[str]:
-        for entry in value:
-            if entry not in _RESPONSES_INCLUDE_ALLOWLIST:
-                raise ValueError(f"Unsupported include value: {entry}")
         return value
 
     @field_validator("truncation")
     @classmethod
     def _validate_truncation(cls, value: str | None) -> str | None:
-        if value is None:
-            return value
-        raise ValueError("truncation is not supported")
+        return value
 
     @field_validator("store")
     @classmethod
     def _ensure_store_false(cls, value: bool | None) -> bool:
-        if value is True:
-            raise ValueError("store must be false")
         return False if value is None else value
-
-    @field_validator("previous_response_id")
-    @classmethod
-    def _reject_previous_response_id(cls, value: str | None) -> str | None:
-        if value is None:
-            return value
-        raise ValueError("previous_response_id is not supported")
 
     @field_validator("tools")
     @classmethod
@@ -416,13 +349,9 @@ class ResponsesCompactRequest(BaseModel):
     def _validate_input_type(cls, value: JsonValue) -> JsonValue:
         if isinstance(value, str):
             normalized = _normalize_input_text(value)
-            if _has_input_file_id(normalized):
-                raise ValueError("input_file.file_id is not supported")
             return _sanitize_input_items(normalized)
         if is_json_list(value):
             input_items = cast(list[JsonValue], value)
-            if _has_input_file_id(input_items):
-                raise ValueError("input_file.file_id is not supported")
             return _sanitize_input_items(input_items)
         raise ValueError("input must be a string or array")
 

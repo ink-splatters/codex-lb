@@ -130,7 +130,7 @@ class ModelMetadata(BaseModel):
     prefer_websockets: bool = False
     supports_parallel_tool_calls: bool = False
     supported_in_api: bool = True
-    minimal_client_version: str | None = None
+    minimal_client_version: JsonValue | None = None
     priority: int = 0
 
 
@@ -149,3 +149,9 @@ class ModelListResponse(BaseModel):
 
     object: str = "list"
     data: list[ModelListItem]
+
+
+class CodexModelsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    models: list[dict[str, JsonValue]]

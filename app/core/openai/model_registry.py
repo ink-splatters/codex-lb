@@ -28,7 +28,7 @@ class UpstreamModel:
     prefer_websockets: bool
     supports_parallel_tool_calls: bool
     supported_in_api: bool
-    minimal_client_version: str | None
+    minimal_client_version: JsonValue | None
     priority: int
     available_in_plans: frozenset[str]
     raw: dict[str, JsonValue] = field(hash=False, compare=False)

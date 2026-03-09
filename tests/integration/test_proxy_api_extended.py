@@ -90,7 +90,7 @@ async def test_proxy_compact_upstream_error_propagates(async_client, monkeypatch
 async def test_proxy_stream_records_cached_and_reasoning_tokens(async_client, monkeypatch):
     expected_account_id = await _import_account(async_client, "acc_usage", "usage@example.com")
 
-    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
         usage = {
             "input_tokens": 10,
             "output_tokens": 5,
@@ -137,7 +137,7 @@ async def test_proxy_stream_retries_rate_limit_then_success(async_client, monkey
     expected_account_id_1 = await _import_account(async_client, "acc_1", "one@example.com")
     expected_account_id_2 = await _import_account(async_client, "acc_2", "two@example.com")
 
-    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
         if account_id == "acc_1":
             event = {
                 "type": "response.failed",
@@ -223,7 +223,7 @@ async def test_proxy_stream_drops_forwarded_headers(async_client, monkeypatch):
     await _import_account(async_client, "acc_headers", "headers@example.com")
     captured_headers: dict[str, str] = {}
 
-    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
         captured_headers.update(headers)
         event = {
             "type": "response.completed",
@@ -268,7 +268,7 @@ async def test_proxy_stream_drops_forwarded_headers(async_client, monkeypatch):
 async def test_proxy_stream_usage_limit_returns_http_error(async_client, monkeypatch):
     expected_account_id = await _import_account(async_client, "acc_limit", "limit@example.com")
 
-    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
         raise ProxyResponseError(
             429,
             {

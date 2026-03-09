@@ -14,7 +14,6 @@ from app.core.types import JsonValue
 logger = logging.getLogger(__name__)
 
 _FETCH_TIMEOUT_SECONDS = 15.0
-_FILTERED_FIELDS = {"base_instructions", "model_messages"}
 
 
 class ModelFetchError(Exception):
@@ -49,8 +48,6 @@ def _list_raw(data: dict[str, JsonValue], key: str) -> list[JsonValue]:
 
 
 def _parse_upstream_model(data: dict[str, JsonValue]) -> UpstreamModel:
-    raw = {k: v for k, v in data.items() if k not in _FILTERED_FIELDS}
-
     reasoning_levels = tuple(
         ReasoningLevel(effort=rl.get("effort", ""), description=rl.get("description", ""))
         for rl in _list_raw(data, "supported_reasoning_levels")
@@ -74,10 +71,10 @@ def _parse_upstream_model(data: dict[str, JsonValue]) -> UpstreamModel:
         prefer_websockets=bool(data.get("prefer_websockets")),
         supports_parallel_tool_calls=bool(data.get("supports_parallel_tool_calls")),
         supported_in_api=bool(data.get("supported_in_api", True)),
-        minimal_client_version=_opt_str(data, "minimal_client_version"),
+        minimal_client_version=data.get("minimal_client_version"),
         priority=_int(data, "priority"),
         available_in_plans=available_in_plans,
-        raw=raw,
+        raw=dict(data),
     )
 
 

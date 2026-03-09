@@ -112,6 +112,14 @@ _WEBSOCKET_HANDSHAKE_ERROR_HINTS = (
     ("usage_limit_reached", "usage limit reached"),
     ("rate_limit_exceeded", "rate limit"),
 )
+_UPSTREAM_RESPONSE_HEADER_ALLOWLIST = frozenset(
+    {
+        "openai-model",
+        "x-codex-turn-state",
+        "x-models-etag",
+        "x-reasoning-included",
+    }
+)
 
 logger = logging.getLogger(__name__)
 _STREAM_CONNECT_TIMEOUT_OVERRIDE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
@@ -697,6 +705,15 @@ def _extract_upstream_message(data: Mapping[str, object]) -> str | None:
         if isinstance(value, str) and value.strip():
             return value
     return None
+
+
+def _copy_upstream_response_headers(
+    source_headers: Mapping[str, str],
+    target_headers: dict[str, str],
+) -> None:
+    for key, value in source_headers.items():
+        if key.lower() in _UPSTREAM_RESPONSE_HEADER_ALLOWLIST:
+            target_headers[key] = value
 
 
 def _normalize_sse_data_line(line: str) -> str:
@@ -1331,6 +1348,7 @@ async def stream_responses(
     raise_for_status: bool = False,
     session: aiohttp.ClientSession | None = None,
     upstream_stream_transport_override: str | None = None,
+    response_headers: dict[str, str] | None = None,
 ) -> AsyncIterator[str]:
     settings = get_settings()
     upstream_base = (base_url or settings.upstream_base_url).rstrip("/")
@@ -1399,6 +1417,8 @@ async def stream_responses(
             timeout=current_timeout,
         ) as resp:
             status_code = resp.status
+            if response_headers is not None:
+                _copy_upstream_response_headers(resp.headers, response_headers)
             if resp.status >= 400:
                 if raise_for_status:
                     error_payload = await _error_payload_from_response(resp)

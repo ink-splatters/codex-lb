@@ -72,25 +72,6 @@ class ChatCompletionsRequest(BaseModel):
     @field_validator("messages")
     @classmethod
     def _reject_file_id(cls, value: list[dict[str, JsonValue]]) -> list[dict[str, JsonValue]]:
-        for message in value:
-            message_mapping = _json_mapping(message)
-            if message_mapping is None:
-                continue
-            content = message_mapping.get("content")
-            for part in _content_parts(content):
-                part_mapping = _json_mapping(part)
-                if part_mapping is None:
-                    continue
-                part_type = _part_type(part_mapping)
-                file_info = part_mapping.get("file")
-                if part_type != "file" and _json_mapping(file_info) is None:
-                    continue
-                file_info_mapping = _json_mapping(file_info)
-                if file_info_mapping is None:
-                    continue
-                file_id = file_info_mapping.get("file_id")
-                if isinstance(file_id, str) and file_id:
-                    raise ValueError("file_id is not supported")
         return value
 
     @model_validator(mode="after")
@@ -197,12 +178,11 @@ def _normalize_chat_tools(tools: list[JsonValue]) -> list[JsonValue]:
             continue
         if isinstance(tool_type, str):
             normalized_type = normalize_tool_type(tool_type)
-            if normalized_type == "web_search":
-                if normalized_type != tool_type:
-                    tool = dict(tool)
-                    tool["type"] = normalized_type
-                normalized.append(tool)
-                continue
+            if normalized_type != tool_type:
+                tool = dict(tool)
+                tool["type"] = normalized_type
+            normalized.append(tool)
+            continue
         name = tool.get("name")
         if isinstance(name, str) and name:
             normalized.append(tool)

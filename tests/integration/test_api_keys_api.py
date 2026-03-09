@@ -288,7 +288,7 @@ async def test_api_key_enforces_model_and_reasoning_for_responses(async_client, 
 
     seen: dict[str, str | None] = {}
 
-    async def fake_stream(payload, _headers, _access_token, _account_id, base_url=None, raise_for_status=False):
+    async def fake_stream(payload, _headers, _access_token, _account_id, base_url=None, raise_for_status=False, **kwargs):
         seen["model"] = payload.model
         seen["effort"] = payload.reasoning.effort if payload.reasoning else None
         usage = {"input_tokens": 3, "output_tokens": 2}
@@ -424,7 +424,7 @@ async def test_api_key_usage_tracking_and_request_log_link(async_client, monkeyp
 
     await _import_account(async_client, "acc_usage_key", "usage-key@example.com")
 
-    async def fake_stream(_payload, _headers, _access_token, _account_id, base_url=None, raise_for_status=False):
+    async def fake_stream(_payload, _headers, _access_token, _account_id, base_url=None, raise_for_status=False, **kwargs):
         usage = {"input_tokens": 10, "output_tokens": 5}
         event = {"type": "response.completed", "response": {"id": "resp_1", "usage": usage}}
         yield f"data: {json.dumps(event)}\n\n"
@@ -502,7 +502,7 @@ async def test_api_key_usage_summary_cost_respects_service_tier(async_client, mo
 
     await _import_account(async_client, "acc_priority_usage_summary", "priority-usage-summary@example.com")
 
-    async def fake_stream(_payload, _headers, _access_token, _account_id, base_url=None, raise_for_status=False):
+    async def fake_stream(_payload, _headers, _access_token, _account_id, base_url=None, raise_for_status=False, **kwargs):
         event = {
             "type": "response.completed",
             "response": {
@@ -607,7 +607,7 @@ async def test_stream_usage_logs_actual_service_tier(async_client, monkeypatch):
 
     await _import_account(async_client, "acc_stream_actual_tier", "stream-actual-tier@example.com")
 
-    async def fake_stream(_payload, _headers, _access_token, _account_id, base_url=None, raise_for_status=False):
+    async def fake_stream(_payload, _headers, _access_token, _account_id, base_url=None, raise_for_status=False, **kwargs):
         event = {
             "type": "response.completed",
             "response": {
@@ -682,7 +682,7 @@ async def test_stream_usage_logs_actual_service_tier_when_response_created_echoe
 
     await _import_account(async_client, "acc_stream_created_tier", "stream-created-tier@example.com")
 
-    async def fake_stream(_payload, _headers, _access_token, _account_id, base_url=None, raise_for_status=False):
+    async def fake_stream(_payload, _headers, _access_token, _account_id, base_url=None, raise_for_status=False, **kwargs):
         created_event = {
             "type": "response.created",
             "response": {
@@ -1003,7 +1003,7 @@ async def test_v1_responses_non_stream_finalizes_cost_limit(async_client, monkey
 
     seen = {"calls": 0}
 
-    async def fake_stream(_payload, _headers, _access_token, _account_id, base_url=None, raise_for_status=False):
+    async def fake_stream(_payload, _headers, _access_token, _account_id, base_url=None, raise_for_status=False, **kwargs):
         seen["calls"] += 1
         yield (
             'data: {"type":"response.completed","response":{"id":"resp_v1_cost_limit","model":"gpt-5.4",'
@@ -1584,7 +1584,7 @@ async def test_stream_401_retry_success_finalizes_once(async_client, monkeypatch
 
     call_count = {"value": 0}
 
-    async def fake_stream(_payload, _headers, _access_token, _account_id, base_url=None, raise_for_status=False):
+    async def fake_stream(_payload, _headers, _access_token, _account_id, base_url=None, raise_for_status=False, **kwargs):
         call_count["value"] += 1
         if call_count["value"] == 1:
             raise ProxyResponseError(
@@ -1729,7 +1729,7 @@ async def test_stream_without_api_key_auth_skips_settlement(async_client, monkey
 
     await _import_account(async_client, "acc_no_auth", "no-auth@example.com")
 
-    async def fake_stream(_payload, _headers, _access_token, _account_id, base_url=None, raise_for_status=False):
+    async def fake_stream(_payload, _headers, _access_token, _account_id, base_url=None, raise_for_status=False, **kwargs):
         usage = {"input_tokens": 10, "output_tokens": 5}
         event = {"type": "response.completed", "response": {"id": "resp_no_auth", "usage": usage}}
         yield f"data: {json.dumps(event)}\n\n"

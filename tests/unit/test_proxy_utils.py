@@ -389,9 +389,10 @@ class _CompactSession:
 
 
 class _SsePostResponse:
-    def __init__(self, chunks: list[bytes]) -> None:
+    def __init__(self, chunks: list[bytes], *, headers: dict[str, str] | None = None) -> None:
         self.status = 200
         self.content = _DummyContent(chunks)
+        self.headers = headers or {}
 
     async def __aenter__(self):
         return self
@@ -1932,6 +1933,57 @@ async def test_stream_responses_websocket_emits_incomplete_when_upstream_closes_
 
 
 @pytest.mark.asyncio
+async def test_stream_responses_copies_selected_upstream_response_headers(monkeypatch):
+    class Settings:
+        upstream_base_url = "https://chatgpt.com/backend-api"
+        upstream_connect_timeout_seconds = 1.0
+        stream_idle_timeout_seconds = 1.0
+        max_sse_event_bytes = 1024
+        image_inline_fetch_enabled = False
+        log_upstream_request_summary = False
+        log_upstream_request_payload = False
+
+    monkeypatch.setattr(proxy_module, "get_settings", lambda: Settings())
+
+    payload = ResponsesRequest.model_validate(
+        {"model": "gpt-5.1", "instructions": "hi", "input": [{"role": "user", "content": "hi"}]}
+    )
+    response_headers: dict[str, str] = {}
+    session = _SseSession(
+        _SsePostResponse(
+            [b'data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n'],
+            headers={
+                "x-codex-turn-state": "ts-1",
+                "x-reasoning-included": "1",
+                "openai-model": "gpt-5.4",
+                "x-models-etag": "etag-1",
+                "x-ignored": "nope",
+            },
+        )
+    )
+
+    events = [
+        event
+        async for event in proxy_module.stream_responses(
+            payload,
+            headers={},
+            access_token="token",
+            account_id="acc_1",
+            session=cast(proxy_module.aiohttp.ClientSession, session),
+            response_headers=response_headers,
+        )
+    ]
+
+    assert events == ['data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n']
+    assert response_headers == {
+        "x-codex-turn-state": "ts-1",
+        "x-reasoning-included": "1",
+        "openai-model": "gpt-5.4",
+        "x-models-etag": "etag-1",
+    }
+
+
+@pytest.mark.asyncio
 async def test_compact_responses_starts_upstream_timer_after_image_inlining(monkeypatch):
     class Settings:
         upstream_base_url = "https://chatgpt.com/backend-api"
@@ -2230,7 +2282,7 @@ async def test_stream_responses_logs_actual_service_tier_and_requested_tier_trac
     monkeypatch.setattr(service, "_ensure_fresh", AsyncMock(return_value=account))
     monkeypatch.setattr(service, "_settle_stream_api_key_usage", AsyncMock(return_value=True))
 
-    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
         yield 'data: {"type":"response.completed","response":{"id":"resp_trace_stream","service_tier":"default"}}\n\n'
 
     monkeypatch.setattr(proxy_service, "core_stream_responses", fake_stream)

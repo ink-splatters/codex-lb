@@ -41,7 +41,7 @@ async def test_v1_chat_completions_stream(async_client, monkeypatch):
     response = await async_client.post("/api/accounts/import", files=files)
     assert response.status_code == 200
 
-    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
         yield 'data: {"type":"response.output_text.delta","delta":"hi"}\n\n'
         yield 'data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n'
 
@@ -66,7 +66,7 @@ async def test_v1_chat_completions_non_stream_forces_stream(async_client, monkey
 
     observed_stream: dict[str, bool | None] = {"value": None}
 
-    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
         observed_stream["value"] = payload.stream
         yield 'data: {"type":"response.output_text.delta","delta":"hi"}\n\n'
         yield 'data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n'
@@ -91,7 +91,7 @@ async def test_v1_chat_completions_stream_include_usage(async_client, monkeypatc
     response = await async_client.post("/api/accounts/import", files=files)
     assert response.status_code == 200
 
-    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False, **kwargs):
         yield 'data: {"type":"response.output_text.delta","delta":"hi"}\n\n'
         yield (
             'data: {"type":"response.completed","response":{"id":"resp_1","usage":'
